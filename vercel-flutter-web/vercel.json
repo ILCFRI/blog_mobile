@@ -10,7 +10,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/index.html"
+      "dest": "/vercel-flutter-web/web/index.html"
     }
   ]
 }
