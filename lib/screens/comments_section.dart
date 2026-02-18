@@ -453,21 +453,27 @@ class _CommentsSectionState extends State<CommentsSection> {
                               const SizedBox(height: 8),
                               ClipRRect(
                                 borderRadius: BorderRadius.circular(8),
-                                child: Image.network(
-                                  imageUrl,
-                                  height: 180,
-                                  width: double.infinity,
-                                  fit: BoxFit.cover,
-                                  loadingBuilder: (context, child, progress) {
-                                    if (progress == null) return child;
-                                    return const SizedBox(
-                                      height: 180,
-                                      child: Center(child: CircularProgressIndicator()),
-                                    );
-                                  },
-                                  errorBuilder: (_, _, _) =>
-                                      const Icon(Icons.broken_image),
-                                ),
+                                child: ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxHeight: 400,
+                                    minHeight: 100,
+                                  ),
+                                  child: Image.network(
+                                    imageUrl,
+                                    height: 180,
+                                    width: double.infinity,
+                                    fit: BoxFit.cover,
+                                    loadingBuilder: (context, child, progress) {
+                                      if (progress == null) return child;
+                                      return const SizedBox(
+                                        height: 180,
+                                        child: Center(child: CircularProgressIndicator()),
+                                      );
+                                    },
+                                    errorBuilder: (_, _, _) =>
+                                        const Icon(Icons.broken_image),
+                                  ),
+                                )
                               ),
                             ]
                           ],
