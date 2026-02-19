@@ -21,7 +21,7 @@ class _CommentsSectionState extends State<CommentsSection> {
   List<Map<String, dynamic>> comments = [];
   bool isLoading = true;
   String? _editingCommentId;
-  List<XFile> _pickedImages = [];
+  final List<XFile> _pickedImages = [];
 
   @override
   void initState() {
@@ -436,8 +436,9 @@ class _CommentsSectionState extends State<CommentsSection> {
                                   PopupMenuButton<String>(
                                     onSelected: (val) {
                                       if (val == 'edit') _startEdit(comment);
-                                      if (val == 'delete')
+                                      if (val == 'delete') {
                                         _deleteComment(comment['id']);
+                                      }
                                     },
                                     itemBuilder: (_) => const [
                                       PopupMenuItem(
@@ -581,7 +582,7 @@ class _ImageSliderState extends State<_ImageSlider> {
                         return const Center(
                             child: CircularProgressIndicator());
                       },
-                      errorBuilder: (_, __, ___) =>
+                      errorBuilder: (_, _, _) =>
                           const Icon(Icons.broken_image),
                     ),
                   ),
