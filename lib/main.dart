@@ -12,9 +12,5 @@ Future<void> main() async {
     anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9teXd6d3p0enJ5ZmtnbWRpeGJ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg3Mjk5NjMsImV4cCI6MjA4NDMwNTk2M30.rea0jI7AoIlKvkbZ6ABQepZAjpquq-lKxuAS9lRXPSw',
   );
 
-  runApp(
-    const ProviderScope(
-      child: MyApp(),
-    ),
-  );
+  runApp( const MyApp());
 }
