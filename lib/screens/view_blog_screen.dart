@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blog_mobile/screens/comments_section.dart';
 
 class ViewBlogScreen extends StatefulWidget {
   final String blogId;
-  
 
   const ViewBlogScreen({
     super.key,
@@ -20,6 +18,7 @@ class ViewBlogScreen extends StatefulWidget {
 class _ViewBlogScreenState extends State<ViewBlogScreen> {
   final supabase = Supabase.instance.client;
   RealtimeChannel? _blogChannel;
+  int _currentImageIndex = 0;
 
   Map<String, dynamic>? blog;
   bool isLoading = true;
@@ -79,6 +78,18 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
         .subscribe();
   }
 
+  void _openFullScreenImage(List<String> imageUrls, int initialIndex) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _FullScreenImageViewer(
+          imageUrls: imageUrls,
+          initialIndex: initialIndex,
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     if (_blogChannel != null) {
@@ -102,10 +113,10 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
     }
 
     final List<String> imageUrls =
-      (blog!['image_urls'] as List<dynamic>?)
-          ?.map((e) => e.toString())
-          .toList() ??
-      [];
+        (blog!['image_urls'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        [];
 
     final profile = blog!['profiles'];
     final username = profile?['username'] ?? 'Unknown';
@@ -164,45 +175,73 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
 
             // Images
             if (imageUrls.isNotEmpty) ...[
-            SizedBox(
-              height: 260,
-              child: ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(
-                  dragDevices: {
-                    PointerDeviceKind.touch,
-                    PointerDeviceKind.mouse,   // 👈 enables mouse drag on web
-                    PointerDeviceKind.trackpad,
-                  },
-                ),
-                child: PageView.builder(
-                  itemCount: imageUrls.length,
-                  physics: const PageScrollPhysics(),
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: CachedNetworkImage(
-                          imageUrl: imageUrls[index],
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          placeholder: (context, url) =>
-                              const Center(child: CircularProgressIndicator()),
-                          errorWidget: (context, url, error) =>
-                              const Icon(Icons.broken_image),
+              SizedBox(
+                height: 260,
+                child: ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                    },
+                  ),
+                  child: PageView.builder(
+                    itemCount: imageUrls.length,
+                    physics: const PageScrollPhysics(),
+                    onPageChanged: (index) =>
+                        setState(() => _currentImageIndex = index),
+                    itemBuilder: (context, index) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: GestureDetector(
+                          onTap: () =>
+                              _openFullScreenImage(imageUrls, index),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(12),
+                            child: Image.network(
+                              imageUrls[index],
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              loadingBuilder: (context, child, progress) {
+                                if (progress == null) return child;
+                                return const Center(
+                                    child: CircularProgressIndicator());
+                              },
+                              errorBuilder: (_, _, _) =>
+                                  const Icon(Icons.broken_image),
+                            ),
+                          ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 ),
               ),
-            ),
-            // ... your page indicator dots
-          ],
+              if (imageUrls.length > 1) ...[
+                const SizedBox(height: 8),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(imageUrls.length, (index) {
+                    return AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: _currentImageIndex == index ? 12 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(4),
+                        color: _currentImageIndex == index
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.grey[300],
+                      ),
+                    );
+                  }),
+                ),
+              ],
+            ],
+
             const SizedBox(height: 24),
             const Divider(),
 
-            // 👇 COMMENTS
             CommentsSection(blogId: widget.blogId),
           ],
         ),
@@ -217,7 +256,91 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
 }
 
 ////////////////////////////////////////////////////////////
-/// COMMENTS SECTION
+/// FULL SCREEN IMAGE VIEWER
 ////////////////////////////////////////////////////////////
 
+class _FullScreenImageViewer extends StatefulWidget {
+  final List<String> imageUrls;
+  final int initialIndex;
 
+  const _FullScreenImageViewer({
+    required this.imageUrls,
+    required this.initialIndex,
+  });
+
+  @override
+  State<_FullScreenImageViewer> createState() => _FullScreenImageViewerState();
+}
+
+class _FullScreenImageViewerState extends State<_FullScreenImageViewer> {
+  late int _currentIndex;
+  late PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentIndex = widget.initialIndex;
+    _pageController = PageController(initialPage: widget.initialIndex);
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        iconTheme: const IconThemeData(color: Colors.white),
+        title: widget.imageUrls.length > 1
+            ? Text(
+                '${_currentIndex + 1} / ${widget.imageUrls.length}',
+                style: const TextStyle(color: Colors.white),
+              )
+            : null,
+      ),
+      body: ScrollConfiguration(
+        behavior: ScrollConfiguration.of(context).copyWith(
+          dragDevices: {
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.trackpad,
+          },
+        ),
+        child: PageView.builder(
+          controller: _pageController,
+          itemCount: widget.imageUrls.length,
+          onPageChanged: (index) =>
+              setState(() => _currentIndex = index),
+          itemBuilder: (context, index) {
+            return InteractiveViewer(
+              minScale: 1.0,
+              maxScale: 4.0,
+              child: Center(
+                child: Image.network(
+                  widget.imageUrls[index],
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return const Center(
+                      child: CircularProgressIndicator(color: Colors.white),
+                    );
+                  },
+                  errorBuilder: (_, _, _) => const Icon(
+                    Icons.broken_image,
+                    color: Colors.white,
+                    size: 48,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
