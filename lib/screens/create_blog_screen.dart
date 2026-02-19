@@ -23,7 +23,7 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
   String? _username;
   String? _avatarUrl;
 
-  XFile? _selectedImage;
+  final List<XFile> _selectedImages = [];
   
   bool isPosting = false;
   bool _isLoadingProfile = true;
@@ -36,7 +36,7 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
   }
 
   bool get _canPost => 
-    _contentController.text.trim().isNotEmpty || _selectedImage != null;
+    _contentController.text.trim().isNotEmpty || _selectedImages.isNotEmpty;
   
   Future<void> _fetchUserProfile() async {
     final user = supabase.auth.currentUser;
@@ -55,37 +55,42 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
     });
   }
 
-  Future<void> _pickImage() async {
-    final picked = await _imagePicker.pickImage(source: ImageSource.gallery);
+  Future<void> _pickImages() async {
+    final pickedImages = await _imagePicker.pickMultiImage();
 
-    if (picked == null) return;
+    if (pickedImages.isEmpty) return;
 
     setState(() {
-      _selectedImage = XFile(picked.path);
+      _selectedImages.addAll(pickedImages);
     });
   }
 
-  Future<String?> _uploadImage(String userId) async {
-    if (_selectedImage == null) return null;
+  Future<List<String>> _uploadImages(String userId) async {
+    final List<String> imageUrls = [];
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
 
-    // Read image bytes
-    final bytes = await _selectedImage!.readAsBytes();
+    for (int i = 0; i < _selectedImages.length; i++) {
+      final image = _selectedImages[i];
+      final bytes = await image.readAsBytes();
+      final mimeType = image.mimeType ?? 'image/jpeg';
+      final fileExt = mimeType.split('/').last;
 
-    final fileExt = _selectedImage!.path.split('.').last;
-    final filePath =
-        'blogs/$userId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
+      final filePath = 'blogs/$userId/${timestamp}_$i.$fileExt'; 
+      await supabase.storage.from('blog-images').uploadBinary(
+        filePath,
+        bytes,
+        fileOptions: FileOptions(
+          upsert: true,
+          contentType: image.mimeType,
+        ),
+      );
 
-    // Upload using bytes
-    await supabase.storage.from('blog-images').uploadBinary(
-          filePath,
-          bytes,
-          fileOptions: FileOptions(
-            upsert: true,
-            contentType: _selectedImage!.mimeType, // optional, helps with web
-          ),
-        );
+      final publicUrl =
+          supabase.storage.from('blog-images').getPublicUrl(filePath);
+      imageUrls.add(publicUrl);
+    }
 
-    return supabase.storage.from('blog-images').getPublicUrl(filePath);
+    return imageUrls;
   }
 
   Future<void> _createBlog() async {
@@ -95,23 +100,23 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
     setState(() => isPosting = true);
 
     try {
-      final imageUrl = await _uploadImage(user.id);
+      final imageUrls = await _uploadImages(user.id);
 
       await supabase.from('blogs').insert({
         'content': _contentController.text.trim(),
-        'image_url': imageUrl,
+        'image_urls': imageUrls,
         'user_id': user.id,
       });
 
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
-      if (!mounted) return;
       UiHelpers.showError(context, 'Post failed.');
     } finally {
       if (mounted) setState(() => isPosting = false);
     }
   }
+
 
   Widget buildImagePreview(XFile file, {double? height}) {
     return FutureBuilder<Uint8List>(
@@ -235,31 +240,45 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
               ),
             ],  
           ),
-          if (_selectedImage != null) ...[
+          if (_selectedImages.isNotEmpty) ...[
             const SizedBox(height: 12),
-            Stack(
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: buildImagePreview(_selectedImage!),
-                ),
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: GestureDetector(
-                    onTap: () => setState(() => _selectedImage = null),
-                    child: const CircleAvatar(
-                      radius: 14,
-                      backgroundColor: Colors.black54,
-                      child: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: Colors.white
-                      )
-                    )
-                  )
-                )
-              ],
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _selectedImages.length,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
+              ),
+              itemBuilder: (context, index) {
+                final image = _selectedImages[index];
+
+                return Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: buildImagePreview(image),
+                    ),
+                    Positioned(
+                      top: 6,
+                      right: 6,
+                      child: GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _selectedImages.removeAt(index);
+                          });
+                        },
+                        child: const CircleAvatar(
+                          radius: 14,
+                          backgroundColor: Colors.black54,
+                          child: Icon(Icons.close, size: 16, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ],
           
@@ -269,7 +288,7 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
               children: [
                 IconButton(
                   icon: Icon(Icons.image_outlined),
-                  onPressed: _pickImage,
+                  onPressed: _pickImages,
                 )
               ],
             )

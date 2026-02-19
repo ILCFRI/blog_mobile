@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blog_mobile/screens/edit_blog_screen.dart';
 import 'package:blog_mobile/screens/view_blog_screen.dart';
 
@@ -71,7 +70,7 @@ class FeedScreenState extends State<FeedScreen> {
             '''
             id,
             content,
-            image_url,
+            image_urls,
             created_at,
             user_id,
             profiles(
@@ -129,10 +128,7 @@ class FeedScreenState extends State<FeedScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text(
-              'Delete',
-              style: TextStyle(color: Colors.red),
-            ),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -142,14 +138,18 @@ class FeedScreenState extends State<FeedScreen> {
 
     final blogData = blogs.cast<Map<String, dynamic>?>().firstWhere(
       (b) => b?['id'] == blogId,
-      orElse: () => null);
+      orElse: () => null,
+    );
     if (blogData == null) return;
 
-    final imageUrl = blogData['image_url'] as String?;
+    // Delete all images from storage
+    final imageUrls = (blogData['image_urls'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ?? [];
 
     await supabase.from('blogs').delete().eq('id', blogId);
 
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+    for (final imageUrl in imageUrls) {
       try {
         final uri = Uri.parse(imageUrl);
         final segments = uri.pathSegments;
@@ -159,9 +159,10 @@ class FeedScreenState extends State<FeedScreen> {
           await supabase.storage.from('blog-images').remove([filePath]);
         }
       } catch (e) {
-        debugPrint('Failed to delete image from storage: $e');
+        debugPrint('Failed to delete image: $e');
       }
     }
+
     _fetchBlogs();
   }
 
@@ -235,6 +236,7 @@ class BlogCard extends StatelessWidget {
     final profile = blog['profiles'];
     final username = profile?['username'] as String?;
     final avatarUrl = profile?['avatar_url'] as String?;
+    final imageUrls = List<String>.from(blog['image_urls'] ?? []);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -325,24 +327,52 @@ class BlogCard extends StatelessWidget {
             ),
           ),
 
-          if (blog['image_url'] != null)
+          if (imageUrls.isNotEmpty)
           ClipRRect(
-            borderRadius: const BorderRadius.all(
-              Radius.circular(12),
-            ),
-            child: CachedNetworkImage(
-              imageUrl: blog['image_url'],
-              height: 180,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              placeholder: (context, _) => const SizedBox(
-                height: 180,
-                child: Center(child: CircularProgressIndicator()),
-              ),
-              errorWidget: (context, _, _) => const SizedBox(
-                height: 180,
-                child: Icon(Icons.broken_image),
-              ),
+            borderRadius: const BorderRadius.all(Radius.circular(12)),
+            child: Stack(
+              children: [
+                Image.network(
+                  imageUrls.first,
+                  height: 180,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return const SizedBox(
+                      height: 180,
+                      child: Center(child: CircularProgressIndicator()),
+                    );
+                  },
+                  errorBuilder: (context, _, _) => const SizedBox(
+                    height: 180,
+                    child: Icon(Icons.broken_image),
+                  ),
+                ),
+                if (imageUrls.length > 1)
+                  Positioned(
+                    bottom: 8,
+                    right: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.photo_library, color: Colors.white, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${imageUrls.length}',
+                            style: const TextStyle(color: Colors.white, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
         ],

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blog_mobile/screens/comments_section.dart';
 
 class ViewBlogScreen extends StatefulWidget {
   final String blogId;
+  
 
   const ViewBlogScreen({
     super.key,
@@ -35,7 +37,7 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
         .select('''
           id,
           content,
-          image_url,
+          image_urls,
           created_at,
           user_id,
           profiles(
@@ -99,6 +101,12 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
       );
     }
 
+    final List<String> imageUrls =
+      (blog!['image_urls'] as List<dynamic>?)
+          ?.map((e) => e.toString())
+          .toList() ??
+      [];
+
     final profile = blog!['profiles'];
     final username = profile?['username'] ?? 'Unknown';
     final avatarUrl = profile?['avatar_url'];
@@ -154,17 +162,43 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
 
             const SizedBox(height: 16),
 
-            // Image
-            if (blog!['image_url'] != null)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: CachedNetworkImage(
-                  imageUrl: blog!['image_url'],
-                  width: double.infinity,
-                  fit: BoxFit.cover,
+            // Images
+            if (imageUrls.isNotEmpty) ...[
+            SizedBox(
+              height: 260,
+              child: ScrollConfiguration(
+                behavior: ScrollConfiguration.of(context).copyWith(
+                  dragDevices: {
+                    PointerDeviceKind.touch,
+                    PointerDeviceKind.mouse,   // 👈 enables mouse drag on web
+                    PointerDeviceKind.trackpad,
+                  },
+                ),
+                child: PageView.builder(
+                  itemCount: imageUrls.length,
+                  physics: const PageScrollPhysics(),
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: CachedNetworkImage(
+                          imageUrl: imageUrls[index],
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                          placeholder: (context, url) =>
+                              const Center(child: CircularProgressIndicator()),
+                          errorWidget: (context, url, error) =>
+                              const Icon(Icons.broken_image),
+                        ),
+                      ),
+                    );
+                  },
                 ),
               ),
-
+            ),
+            // ... your page indicator dots
+          ],
             const SizedBox(height: 24),
             const Divider(),
 

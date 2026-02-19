@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -20,7 +21,7 @@ class _CommentsSectionState extends State<CommentsSection> {
   List<Map<String, dynamic>> comments = [];
   bool isLoading = true;
   String? _editingCommentId;
-  XFile? _pickedImage;
+  List<XFile> _pickedImages = [];
 
   @override
   void initState() {
@@ -35,7 +36,7 @@ class _CommentsSectionState extends State<CommentsSection> {
         .select('''
           id,
           comment,
-          image_url,
+          image_urls,
           user_id,
           created_at,
           profiles(
@@ -71,40 +72,39 @@ class _CommentsSectionState extends State<CommentsSection> {
         .subscribe();
   }
 
-  Future<void> _pickImage() async {
-    final picked = await ImagePicker().pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      setState(() {
-        _pickedImage = XFile(picked.path);
-      });
+  Future<void> _pickImages() async {
+    final picked = await ImagePicker().pickMultiImage();
+    if (picked.isEmpty) return;
+    setState(() => _pickedImages.addAll(picked));
+  }
+
+  Future<List<String>> _uploadImages(String userId) async {
+    final List<String> urls = [];
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+
+    for (int i = 0; i < _pickedImages.length; i++) {
+      final image = _pickedImages[i];
+      final bytes = await image.readAsBytes();
+      final mimeType = image.mimeType ?? 'image/jpeg';
+      final ext = mimeType.split('/').last;
+      final filePath =
+          'comments/${widget.blogId}/$userId/${timestamp}_$i.$ext';
+
+      await supabase.storage.from('blog-images').uploadBinary(
+        filePath,
+        bytes,
+        fileOptions: FileOptions(upsert: true, contentType: mimeType),
+      );
+
+      urls.add(supabase.storage.from('blog-images').getPublicUrl(filePath));
     }
+
+    return urls;
   }
-
-  Future<String?> _uploadImage(String userId) async {
-    if (_pickedImage == null) return null;
-
-    final bytes = await _pickedImage!.readAsBytes();
-    final fileExt = _pickedImage!.path.split('.').last;
-    final filePath =
-        'comments/${widget.blogId}/$userId/${DateTime.now().millisecondsSinceEpoch}.$fileExt';
-
-    await supabase.storage.from('blog-images').uploadBinary(
-      filePath,
-      bytes,
-      fileOptions: FileOptions(
-        upsert: true,
-        contentType: _pickedImage!.mimeType,
-      ),
-    );
-
-    return supabase.storage.from('blog-images').getPublicUrl(filePath);
-  }
-
-
 
   Future<void> _addOrEditComment() async {
     final text = _controller.text.trim();
-    if (text.isEmpty && _pickedImage == null) return;
+    if (text.isEmpty && _pickedImages.isEmpty) return;
 
     setState(() => isLoading = true);
 
@@ -112,37 +112,27 @@ class _CommentsSectionState extends State<CommentsSection> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
-      String? imageUrl;
-      if (_pickedImage != null) {
-        imageUrl = await _uploadImage(user.id);
-      }
+      final imageUrls = await _uploadImages(user.id);
 
       if (_editingCommentId != null) {
-        // Edit
-        final updateData = {'comment': text, 'image_url': imageUrl};
-        if (imageUrl == null) updateData['image_url'] = null;
-
-        await supabase
-            .from('comments')
-            .update(updateData)
-            .eq('id', _editingCommentId!);
+        await supabase.from('comments').update({
+          'comment': text,
+          'image_urls': imageUrls,
+        }).eq('id', _editingCommentId!);
         _editingCommentId = null;
       } else {
-        // Add
         await supabase.from('comments').insert({
           'blog_id': widget.blogId,
           'user_id': user.id,
           'comment': text,
-          'image_url': imageUrl,
+          'image_urls': imageUrls,
         });
       }
 
       _controller.clear();
-      _pickedImage = null;
+      _pickedImages.clear();
 
-      // Refresh comments immediately after posting
       await _fetchComments();
-
     } catch (e) {
       debugPrint('Failed to post comment: $e');
     } finally {
@@ -150,24 +140,21 @@ class _CommentsSectionState extends State<CommentsSection> {
     }
   }
 
-
   Future<void> _deleteComment(String id) async {
     final comment = comments.firstWhere(
-    (c) => c['id'] == id,
-    orElse: () => <String, dynamic>{},
+      (c) => c['id'] == id,
+      orElse: () => <String, dynamic>{},
     );
 
-    final imageUrl = comment['image_url'] as String?;
+    final imageUrls = List<String>.from(comment['image_urls'] ?? []);
 
-    // Delete comment row from database
     await supabase.from('comments').delete().eq('id', id);
 
-    // Delete image from storage if it exists
-    if (imageUrl != null && imageUrl.isNotEmpty) {
+    for (final imageUrl in imageUrls) {
       try {
         final uri = Uri.parse(imageUrl);
         final segments = uri.pathSegments;
-        final bucketIndex = segments.indexOf('blog-images'); // match your bucket name
+        final bucketIndex = segments.indexOf('blog-images');
         if (bucketIndex != -1) {
           final filePath = segments.sublist(bucketIndex + 1).join('/');
           await supabase.storage.from('blog-images').remove([filePath]);
@@ -177,15 +164,15 @@ class _CommentsSectionState extends State<CommentsSection> {
       }
     }
 
-    // Refresh comments
     _fetchComments();
   }
 
   void _startEdit(Map<String, dynamic> comment) {
     final contentController =
         TextEditingController(text: comment['comment'] ?? '');
-    XFile? selectedImage;
-    String? existingImageUrl = comment['image_url'];
+    List<XFile> newImages = [];
+    List<String> existingImageUrls =
+        List<String>.from(comment['image_urls'] ?? []);
 
     showModalBottomSheet(
       isScrollControlled: true,
@@ -194,17 +181,11 @@ class _CommentsSectionState extends State<CommentsSection> {
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setModalState) {
-            Future<void> pickModalImage() async {
-              final picked =
-                  await ImagePicker().pickImage(source: ImageSource.gallery);
-
+            Future<void> pickModalImages() async {
+              final picked = await ImagePicker().pickMultiImage();
               if (!sheetContext.mounted) return;
-
-              if (picked != null) {
-                setModalState(() {
-                  selectedImage = XFile(picked.path);
-                  existingImageUrl = null;
-                });
+              if (picked.isNotEmpty) {
+                setModalState(() => newImages.addAll(picked));
               }
             }
 
@@ -212,69 +193,65 @@ class _CommentsSectionState extends State<CommentsSection> {
               final user = supabase.auth.currentUser;
               if (user == null) return;
 
-              String? imageUrl = existingImageUrl;
+              final timestamp = DateTime.now().millisecondsSinceEpoch;
+              final List<String> uploadedUrls = [];
 
-              if (selectedImage != null) {
-                final ext = selectedImage!.path.split('.').last;
+              for (int i = 0; i < newImages.length; i++) {
+                final image = newImages[i];
+                final mimeType = image.mimeType ?? 'image/jpeg';
+                final ext = mimeType.split('/').last;
                 final path =
-                    'comments/${widget.blogId}/${user.id}/${DateTime.now().millisecondsSinceEpoch}.$ext';
+                    'comments/${widget.blogId}/${user.id}/${timestamp}_$i.$ext';
 
                 await supabase.storage.from('blog-images').uploadBinary(
                   path,
-                  await selectedImage!.readAsBytes(),
-                  fileOptions: FileOptions(
-                    upsert: true,
-                    contentType: selectedImage!.mimeType,
-                  ),
+                  await image.readAsBytes(),
+                  fileOptions:
+                      FileOptions(upsert: true, contentType: mimeType),
                 );
 
-
-                imageUrl =
-                    supabase.storage.from('blog-images').getPublicUrl(path);
+                uploadedUrls.add(
+                    supabase.storage.from('blog-images').getPublicUrl(path));
               }
+
+              final allUrls = [...existingImageUrls, ...uploadedUrls];
 
               await supabase.from('comments').update({
                 'comment': contentController.text.trim(),
-                'image_url': imageUrl,
+                'image_urls': allUrls,
               }).eq('id', comment['id']);
 
               if (!sheetContext.mounted) return;
               Navigator.pop(sheetContext, true);
-
               if (mounted) _fetchComments();
             }
 
+            final totalImages = existingImageUrls.length + newImages.length;
             final canSave =
-                contentController.text.trim().isNotEmpty ||
-                    selectedImage != null ||
-                    existingImageUrl != null;
+                contentController.text.trim().isNotEmpty || totalImages > 0;
 
             return SizedBox(
               height: MediaQuery.of(sheetContext).size.height * 0.9,
               child: Container(
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(20)),
                 ),
                 padding: const EdgeInsets.all(16),
                 child: ListView(
                   children: [
+                    // Header
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         IconButton(
                           icon: const Icon(Icons.close),
-                          onPressed: () {
-                            if (sheetContext.mounted) {
-                              Navigator.pop(sheetContext);
-                            }
-                          },
+                          onPressed: () => Navigator.pop(sheetContext),
                         ),
-                        const Text(
-                          'Edit Comment',
-                          style: TextStyle(
-                              fontSize: 20, fontWeight: FontWeight.bold),
-                        ),
+                        const Text('Edit Comment',
+                            style: TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold)),
                         TextButton(
                           onPressed: canSave ? saveEdit : null,
                           child: const Text('Save'),
@@ -296,34 +273,59 @@ class _CommentsSectionState extends State<CommentsSection> {
 
                     const SizedBox(height: 12),
 
-                    if (selectedImage != null || existingImageUrl != null)
-                      Stack(
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: selectedImage != null
-                                ? buildImagePreview(selectedImage!)
-                                : Image.network(existingImageUrl!),
-                          ),
-                          Positioned(
-                            top: 8,
-                            right: 8,
-                            child: GestureDetector(
-                              onTap: () {
-                                setModalState(() {
-                                  selectedImage = null;
-                                  existingImageUrl = null;
-                                });
-                              },
-                              child: const CircleAvatar(
-                                radius: 14,
-                                backgroundColor: Colors.black54,
-                                child: Icon(Icons.close,
-                                    size: 16, color: Colors.white),
+                    // Image grid for editing (keeps remove buttons)
+                    if (totalImages > 0)
+                      GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: totalImages,
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 8,
+                          mainAxisSpacing: 8,
+                        ),
+                        itemBuilder: (context, index) {
+                          final isExisting =
+                              index < existingImageUrls.length;
+                          return Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: isExisting
+                                    ? Image.network(
+                                        existingImageUrls[index],
+                                        fit: BoxFit.cover,
+                                      )
+                                    : _buildXFilePreview(newImages[
+                                        index - existingImageUrls.length]),
                               ),
-                            ),
-                          ),
-                        ],
+                              Positioned(
+                                top: 4,
+                                right: 4,
+                                child: GestureDetector(
+                                  onTap: () {
+                                    setModalState(() {
+                                      if (isExisting) {
+                                        existingImageUrls.removeAt(index);
+                                      } else {
+                                        newImages.removeAt(
+                                            index - existingImageUrls.length);
+                                      }
+                                    });
+                                  },
+                                  child: const CircleAvatar(
+                                    radius: 12,
+                                    backgroundColor: Colors.black54,
+                                    child: Icon(Icons.close,
+                                        size: 14, color: Colors.white),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          );
+                        },
                       ),
 
                     const SizedBox(height: 12),
@@ -332,7 +334,7 @@ class _CommentsSectionState extends State<CommentsSection> {
                       children: [
                         IconButton(
                           icon: const Icon(Icons.image_outlined),
-                          onPressed: pickModalImage,
+                          onPressed: pickModalImages,
                         ),
                       ],
                     ),
@@ -346,7 +348,7 @@ class _CommentsSectionState extends State<CommentsSection> {
     );
   }
 
-  Widget buildImagePreview(XFile file, {double? height}) {
+  Widget _buildXFilePreview(XFile file, {double? height}) {
     return FutureBuilder<Uint8List>(
       future: file.readAsBytes(),
       builder: (context, snapshot) {
@@ -356,17 +358,10 @@ class _CommentsSectionState extends State<CommentsSection> {
             child: const Center(child: CircularProgressIndicator()),
           );
         }
-
-        return Image.memory(
-          snapshot.data!,
-          height: height,
-          fit: BoxFit.cover,
-        );
+        return Image.memory(snapshot.data!, height: height, fit: BoxFit.cover);
       },
     );
   }
-
-  
 
   @override
   void dispose() {
@@ -382,7 +377,8 @@ class _CommentsSectionState extends State<CommentsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Comments', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        const Text('Comments',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
         const SizedBox(height: 12),
 
         if (isLoading)
@@ -398,7 +394,8 @@ class _CommentsSectionState extends State<CommentsSection> {
               final comment = comments[index];
               final profile = comment['profiles'];
               final isOwner = comment['user_id'] == currentUserId;
-              final imageUrl = comment['image_url'];
+              final imageUrls =
+                  List<String>.from(comment['image_urls'] ?? []);
 
               return Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -431,51 +428,35 @@ class _CommentsSectionState extends State<CommentsSection> {
                                   child: Text(
                                     profile?['username'] ?? 'Unknown',
                                     style: const TextStyle(
-                                        fontWeight: FontWeight.bold, fontSize: 13),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13),
                                   ),
                                 ),
                                 if (isOwner)
                                   PopupMenuButton<String>(
                                     onSelected: (val) {
                                       if (val == 'edit') _startEdit(comment);
-                                      if (val == 'delete') _deleteComment(comment['id']);
+                                      if (val == 'delete')
+                                        _deleteComment(comment['id']);
                                     },
                                     itemBuilder: (_) => const [
-                                      PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                                      PopupMenuItem(
+                                          value: 'edit', child: Text('Edit')),
+                                      PopupMenuItem(
+                                          value: 'delete',
+                                          child: Text('Delete')),
                                     ],
                                   ),
                               ],
                             ),
                             const SizedBox(height: 4),
                             Text(comment['comment'] ?? ''),
-                            if (imageUrl != null && imageUrl.isNotEmpty) ...[
+
+                            // Slideable image viewer
+                            if (imageUrls.isNotEmpty) ...[
                               const SizedBox(height: 8),
-                              ClipRRect(
-                                borderRadius: BorderRadius.circular(8),
-                                child: ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                    maxHeight: 400,
-                                    minHeight: 100,
-                                  ),
-                                  child: Image.network(
-                                    imageUrl,
-                                    height: 180,
-                                    width: double.infinity,
-                                    fit: BoxFit.cover,
-                                    loadingBuilder: (context, child, progress) {
-                                      if (progress == null) return child;
-                                      return const SizedBox(
-                                        height: 180,
-                                        child: Center(child: CircularProgressIndicator()),
-                                      );
-                                    },
-                                    errorBuilder: (_, _, _) =>
-                                        const Icon(Icons.broken_image),
-                                  ),
-                                )
-                              ),
-                            ]
+                              _ImageSlider(imageUrls: imageUrls),
+                            ],
                           ],
                         ),
                       ),
@@ -488,38 +469,147 @@ class _CommentsSectionState extends State<CommentsSection> {
 
         const SizedBox(height: 12),
 
-        if (_pickedImage != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8.0),
-            child: Stack(
-              children: [
-                buildImagePreview(_pickedImage!, height: 100),
-                Positioned(
-                  right: 0,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.red),
-                    onPressed: () => setState(() => _pickedImage = null),
-                  ),
-                ),
-              ],
+        // Picked images preview grid
+        if (_pickedImages.isNotEmpty)
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            itemCount: _pickedImages.length,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
+              crossAxisSpacing: 6,
+              mainAxisSpacing: 6,
             ),
+            itemBuilder: (context, index) {
+              return Stack(
+                fit: StackFit.expand,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: _buildXFilePreview(_pickedImages[index]),
+                  ),
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: GestureDetector(
+                      onTap: () =>
+                          setState(() => _pickedImages.removeAt(index)),
+                      child: const CircleAvatar(
+                        radius: 11,
+                        backgroundColor: Colors.black54,
+                        child: Icon(Icons.close, size: 13, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
 
+        const SizedBox(height: 8),
+
+        // Comment input row
         Row(
           children: [
-            IconButton(icon: const Icon(Icons.image), onPressed: _pickImage),
+            IconButton(
+                icon: const Icon(Icons.image), onPressed: _pickImages),
             Expanded(
               child: TextField(
                 controller: _controller,
                 decoration: InputDecoration(
-                  hintText: _editingCommentId != null ? 'Edit comment...' : 'Write a comment...',
+                  hintText: _editingCommentId != null
+                      ? 'Edit comment...'
+                      : 'Write a comment...',
                   border: const OutlineInputBorder(),
                 ),
               ),
             ),
-            IconButton(icon: const Icon(Icons.send), onPressed: _addOrEditComment),
+            IconButton(
+                icon: const Icon(Icons.send), onPressed: _addOrEditComment),
           ],
         ),
+      ],
+    );
+  }
+}
+
+////////////////////////////////////////////////////////////
+/// IMAGE SLIDER WIDGET
+////////////////////////////////////////////////////////////
+
+class _ImageSlider extends StatefulWidget {
+  final List<String> imageUrls;
+
+  const _ImageSlider({required this.imageUrls});
+
+  @override
+  State<_ImageSlider> createState() => _ImageSliderState();
+}
+
+class _ImageSliderState extends State<_ImageSlider> {
+  int _currentIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        SizedBox(
+          height: 200,
+          child: ScrollConfiguration(
+            behavior: ScrollConfiguration.of(context).copyWith(
+              dragDevices: {
+                PointerDeviceKind.touch,
+                PointerDeviceKind.mouse,
+                PointerDeviceKind.trackpad,
+              },
+            ),
+            child: PageView.builder(
+              itemCount: widget.imageUrls.length,
+              onPageChanged: (index) =>
+                  setState(() => _currentIndex = index),
+              itemBuilder: (context, index) {
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      widget.imageUrls[index],
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                      loadingBuilder: (context, child, progress) {
+                        if (progress == null) return child;
+                        return const Center(
+                            child: CircularProgressIndicator());
+                      },
+                      errorBuilder: (_, __, ___) =>
+                          const Icon(Icons.broken_image),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        if (widget.imageUrls.length > 1) ...[
+          const SizedBox(height: 6),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(widget.imageUrls.length, (index) {
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                margin: const EdgeInsets.symmetric(horizontal: 3),
+                width: _currentIndex == index ? 10 : 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(3),
+                  color: _currentIndex == index
+                      ? Theme.of(context).colorScheme.primary
+                      : Colors.grey[400],
+                ),
+              );
+            }),
+          ),
+        ],
       ],
     );
   }
