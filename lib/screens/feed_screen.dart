@@ -69,6 +69,7 @@ class FeedScreenState extends State<FeedScreen> {
           .select(
             '''
             id,
+            title,
             content,
             image_urls,
             created_at,
@@ -233,6 +234,7 @@ class BlogCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = blog['title'] as String?;
     final profile = blog['profiles'];
     final username = profile?['username'] as String?;
     final avatarUrl = profile?['avatar_url'] as String?;
@@ -318,6 +320,19 @@ class BlogCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (title != null && title.trim().isNotEmpty) ...[
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                
                 Text(
                   blog['content'] ?? '',
                   maxLines: 3,

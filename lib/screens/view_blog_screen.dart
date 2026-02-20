@@ -35,6 +35,7 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
         .from('blogs')
         .select('''
           id,
+          title,
           content,
           image_urls,
           created_at,
@@ -118,6 +119,7 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
             .toList() ??
         [];
 
+    final title = blog!['title'] as String?;
     final profile = blog!['profiles'];
     final username = profile?['username'] ?? 'Unknown';
     final avatarUrl = profile?['avatar_url'];
@@ -164,6 +166,16 @@ class _ViewBlogScreenState extends State<ViewBlogScreen> {
             ),
 
             const SizedBox(height: 16),
+
+            if (title != null && title.trim().isNotEmpty)
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  height: 1.3,
+                )
+              ),
 
             // Content
             Text(

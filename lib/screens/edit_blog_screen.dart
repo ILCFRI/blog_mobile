@@ -22,6 +22,7 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
   final supabase = Supabase.instance.client;
   final _imagePicker = ImagePicker();
 
+  late TextEditingController _titleController;
   late TextEditingController _contentController;
 
   String? _username;
@@ -36,6 +37,8 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
   @override
   void initState() {
     super.initState();
+
+    _titleController = TextEditingController(text: widget.blog['title']);
     _contentController = TextEditingController(text: widget.blog['content']);
 
     // Load existing image URLs from blog
@@ -45,10 +48,12 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
         [];
 
     _fetchUserProfile();
+    _titleController.addListener(() => setState(() {}));
     _contentController.addListener(() => setState(() {}));
   }
 
   bool get _canSave =>
+      _titleController.text.trim().isNotEmpty &&
       _contentController.text.trim().isNotEmpty ||
       _newImages.isNotEmpty ||
       _existingImageUrls.isNotEmpty;
@@ -110,6 +115,7 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
       final allImageUrls = [..._existingImageUrls, ...newUrls];
 
       await supabase.from('blogs').update({
+        'title': _titleController.text.trim(),
         'content': _contentController.text.trim(),
         'image_urls': allImageUrls,
       }).eq('id', widget.blog['id']);
@@ -140,6 +146,7 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
 
   @override
   void dispose() {
+    _titleController.dispose();
     _contentController.dispose();
     super.dispose();
   }
@@ -223,6 +230,14 @@ class _EditBlogScreenState extends State<EditBlogScreen> {
                           style: const TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 6),
+                      TextField(
+                        controller: _titleController,
+                        maxLength: 100,
+                        decoration: const InputDecoration(
+                          hintText: 'Title',
+                          border: InputBorder.none,
+                        ),
+                      ),
                       TextField(
                         controller: _contentController,
                         maxLines: null,

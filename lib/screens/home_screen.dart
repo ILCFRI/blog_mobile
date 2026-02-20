@@ -24,7 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _screens = [
       FeedScreen(key: _feedKey),
-      const SizedBox(), // placeholder (Create handled via modal)
+      const SizedBox(),
       ProfileScreen(),
     ];
   }

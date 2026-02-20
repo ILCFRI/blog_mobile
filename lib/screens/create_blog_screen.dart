@@ -16,7 +16,8 @@ class CreateBlogScreen extends StatefulWidget {
 
 class _CreateBlogScreenState extends State<CreateBlogScreen> {
   final supabase = Supabase.instance.client;
-
+  
+  final _titleController = TextEditingController();
   final _contentController = TextEditingController();
   final _imagePicker = ImagePicker();
 
@@ -32,10 +33,12 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
   void initState() {
     super.initState();
     _fetchUserProfile();
+    _titleController.addListener(() => setState(() {}));
     _contentController.addListener(() => setState(() {}));
   }
 
   bool get _canPost => 
+    _titleController.text.trim().isNotEmpty &&
     _contentController.text.trim().isNotEmpty || _selectedImages.isNotEmpty;
   
   Future<void> _fetchUserProfile() async {
@@ -97,18 +100,31 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
     final user = supabase.auth.currentUser;
     if (user == null) return;
 
+    if (_titleController.text.trim().isEmpty && 
+        _contentController.text.trim().isEmpty && 
+        _selectedImages.isEmpty) {
+      UiHelpers.showError(context, 'Please add content or images.');
+      return;
+    }
+
     setState(() => isPosting = true);
 
     try {
       final imageUrls = await _uploadImages(user.id);
 
       await supabase.from('blogs').insert({
+        'title': _titleController.text.trim(),
         'content': _contentController.text.trim(),
         'image_urls': imageUrls,
         'user_id': user.id,
       });
 
       if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Blog post created!')),
+      );
+      
       Navigator.pop(context, true);
     } catch (e) {
       UiHelpers.showError(context, 'Post failed.');
@@ -141,6 +157,7 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
 
   @override
   void dispose() {
+    _titleController.dispose();
     _contentController.dispose();
     super.dispose();
   }
@@ -226,6 +243,15 @@ class _CreateBlogScreenState extends State<CreateBlogScreen> {
                       )
                     ),
                     const SizedBox(height: 6),
+
+                    TextField(
+                      controller: _titleController,
+                      maxLength: 100,
+                      decoration: InputDecoration(
+                        hintText: 'Title',
+                        border: InputBorder.none,
+                      ),
+                    ),
 
                     TextField(
                       controller: _contentController,
